@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify, render_template_string
-from threading import Thread
 import time
 import hashlib
 import json
@@ -165,7 +164,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔗 Simulateur Blockchain - Nœud {{ node_id }}</title>
+    <title>🔗 Simulateur Blockchain - {{ node_id }}</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -381,7 +380,7 @@ HTML_TEMPLATE = '''
     <div class="container">
         <header>
             <h1>🔗 Simulateur Blockchain</h1>
-            <div class="node-badge">Nœud {{ node_id }} - Port {{ port }}</div>
+            <div class="node-badge">{{ node_id }}</div>
         </header>
         
         <div class="stats">
@@ -441,7 +440,7 @@ HTML_TEMPLATE = '''
         </div>
         
         <div class="card">
-            <h2>📊 Blockchain ({{ node_id }})</h2>
+            <h2>📊 Blockchain</h2>
             <div id="blockchain"></div>
         </div>
     </div>
@@ -452,7 +451,6 @@ HTML_TEMPLATE = '''
             loadStats();
         });
         
-        // Vérifier le solde lors de la saisie
         document.getElementById('sender').addEventListener('input', async (e) => {
             const sender = e.target.value;
             if (sender.length > 2) {
@@ -650,76 +648,62 @@ HTML_TEMPLATE = '''
 
 # ==================== FLASK APP ====================
 
-def create_app(port=5000, node_id="Node1"):
-    app = Flask(__name__)
-    app.config['node_id'] = node_id
-    app.config['port'] = port
-    blockchain = Blockchain(difficulty=3)
+# Créer l'instance blockchain globale
+blockchain = Blockchain(difficulty=3)
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    node_id = "Render Node"
+    return render_template_string(HTML_TEMPLATE, node_id=node_id)
+
+@app.route('/transactions/new', methods=['POST'])
+def new_transaction():
+    values = request.get_json()
+    required = ['sender', 'recipient', 'amount']
     
-    @app.route('/')
-    def home():
-        return render_template_string(HTML_TEMPLATE, node_id=node_id, port=port)
+    if not all(k in values for k in required):
+        return jsonify({'error': 'Champs manquants dans la transaction'}), 400
     
-    @app.route('/transactions/new', methods=['POST'])
-    def new_transaction():
-        values = request.get_json()
-        required = ['sender', 'recipient', 'amount']
-        
-        if not all(k in values for k in required):
-            return jsonify({'error': 'Champs manquants dans la transaction'}), 400
-        
-        try:
-            amount = float(values['amount'])
-            if amount <= 0:
-                return jsonify({'error': 'Le montant doit être positif'}), 400
-        except ValueError:
-            return jsonify({'error': 'Le montant doit être un nombre'}), 400
-        
-        # Vérifier le solde (sauf pour "network")
-        if values['sender'] != 'network':
-            balance = blockchain.get_balance(values['sender'])
-            if balance < amount:
-                return jsonify({
-                    'error': f'Solde insuffisant. Solde actuel: {balance} coins'
-                }), 400
-        
-        tx = create_transaction(values['sender'], values['recipient'], amount)
-        blockchain.add_transaction(tx)
-        
-        return jsonify({
-            'message': f'Transaction ajoutée au mempool !',
-            'transaction': tx,
-            'pending_transactions': len(blockchain.mempool)
-        }), 201
+    try:
+        amount = float(values['amount'])
+        if amount <= 0:
+            return jsonify({'error': 'Le montant doit être positif'}), 400
+    except ValueError:
+        return jsonify({'error': 'Le montant doit être un nombre'}), 400
     
-    @app.route('/mine', methods=['GET'])
-    def mine():
-        miner_address = request.args.get('miner', 'miner1')
-        
-        if not blockchain.mempool:
-            return jsonify({'message': 'Aucune transaction à miner !'}), 400
-        
-        start_time = time.time()
-        block = blockchain.mine_block(miner_address)
-        mining_time = time.time() - start_time
-        
-        return jsonify({
-            'message': f'Bloc #{block.index} miné avec succès en {mining_time:.2f}s !',
-            'block': {
-                'index': block.index,
-                'timestamp': block.timestamp,
-                'transactions': block.transactions,
-                'hash': block.hash,
-                'previous_hash': block.previous_hash,
-                'merkle_root': block.merkle_root,
-                'nonce': block.nonce
-            },
-            'mining_time': mining_time
-        }), 200
+    # Vérifier le solde (sauf pour "network")
+    if values['sender'] != 'network':
+        balance = blockchain.get_balance(values['sender'])
+        if balance < amount:
+            return jsonify({
+                'error': f'Solde insuffisant. Solde actuel: {balance} coins'
+            }), 400
     
-    @app.route('/chain', methods=['GET'])
-    def full_chain():
-        chain_data = [{
+    tx = create_transaction(values['sender'], values['recipient'], amount)
+    blockchain.add_transaction(tx)
+    
+    return jsonify({
+        'message': f'Transaction ajoutée au mempool !',
+        'transaction': tx,
+        'pending_transactions': len(blockchain.mempool)
+    }), 201
+
+@app.route('/mine', methods=['GET'])
+def mine():
+    miner_address = request.args.get('miner', 'miner1')
+    
+    if not blockchain.mempool:
+        return jsonify({'message': 'Aucune transaction à miner !'}), 400
+    
+    start_time = time.time()
+    block = blockchain.mine_block(miner_address)
+    mining_time = time.time() - start_time
+    
+    return jsonify({
+        'message': f'Bloc #{block.index} miné avec succès en {mining_time:.2f}s !',
+        'block': {
             'index': block.index,
             'timestamp': block.timestamp,
             'transactions': block.transactions,
@@ -727,53 +711,46 @@ def create_app(port=5000, node_id="Node1"):
             'previous_hash': block.previous_hash,
             'merkle_root': block.merkle_root,
             'nonce': block.nonce
-        } for block in blockchain.chain]
-        
-        return jsonify({
-            'length': len(chain_data),
-            'chain': chain_data,
-            'pending_transactions': blockchain.mempool,
-            'difficulty': blockchain.difficulty
-        }), 200
-    
-    @app.route('/validate', methods=['GET'])
-    def validate_chain():
-        is_valid = blockchain.is_chain_valid()
-        return jsonify({
-            'valid': is_valid,
-            'message': 'La blockchain est valide !' if is_valid else 'La blockchain est corrompue !'
-        }), 200
-    
-    @app.route('/balance/<address>', methods=['GET'])
-    def get_balance(address):
-        balance = blockchain.get_balance(address)
-        return jsonify({
-            'address': address,
-            'balance': balance
-        }), 200
-    
-    return app
+        },
+        'mining_time': mining_time
+    }), 200
 
+@app.route('/chain', methods=['GET'])
+def full_chain():
+    chain_data = [{
+        'index': block.index,
+        'timestamp': block.timestamp,
+        'transactions': block.transactions,
+        'hash': block.hash,
+        'previous_hash': block.previous_hash,
+        'merkle_root': block.merkle_root,
+        'nonce': block.nonce
+    } for block in blockchain.chain]
+    
+    return jsonify({
+        'length': len(chain_data),
+        'chain': chain_data,
+        'pending_transactions': blockchain.mempool,
+        'difficulty': blockchain.difficulty
+    }), 200
 
-# ==================== LANCEMENT DU SERVEUR ====================
+@app.route('/validate', methods=['GET'])
+def validate_chain():
+    is_valid = blockchain.is_chain_valid()
+    return jsonify({
+        'valid': is_valid,
+        'message': 'La blockchain est valide !' if is_valid else 'La blockchain est corrompue !'
+    }), 200
 
+@app.route('/balance/<address>', methods=['GET'])
+def get_balance(address):
+    balance = blockchain.get_balance(address)
+    return jsonify({
+        'address': address,
+        'balance': balance
+    }), 200
+
+# Pour l'exécution locale
 if __name__ == "__main__":
-    import sys
-    
-    # Récupérer le port depuis les arguments ou utiliser 5000 par défaut
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    node_id = f"Node{port}"
-    
-    print(f"\n{'='*60}")
-    print(f"🚀 DÉMARRAGE DU NŒUD BLOCKCHAIN")
-    print(f"{'='*60}")
-    print(f"📍 Nœud ID: {node_id}")
-    print(f"🌐 Port: {port}")
-    print(f"🔗 URL: http://localhost:{port}")
-    print(f"{'='*60}\n")
-    
-    print(f"💡 Pour lancer un autre nœud, exécutez:")
-    print(f"   python {sys.argv[0]} {port+1}\n")
-    
-    app = create_app(port=port, node_id=node_id)
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
